@@ -523,8 +523,8 @@ test('client-provided multi-turn history suppresses server recovery-history inje
   ]), true);
 });
 
-test('context-too-long detector recognizes DeepSeek localized errors', () => {
-  assert.equal(serverInternals.isContextTooLongError({ content: 'Содержание слишком длинное. Сократите его и попробуйте снова.' }), true);
+test('context-too-long detector recognizes context-length errors', () => {
+  assert.equal(serverInternals.isContextTooLongError({ content: 'The content is too long. Shorten it and try again.' }), true);
   assert.equal(serverInternals.isContextTooLongError({ content: 'Maximum context length exceeded' }), true);
   assert.equal(serverInternals.isContextTooLongError({ content: 'Temporary backend overload' }), false);
 });
@@ -897,12 +897,12 @@ test('image uploads default on and retain the explicit zero opt-out', () => {
 
 test('rate-limit detector recognizes DeepSeek throttling messages', () => {
   assert.equal(serverInternals.isRateLimitError({ content: 'Too many messages in a short period' }), true);
-  assert.equal(serverInternals.isRateLimitError({ content: 'Слишком частые сообщения. Повторите попытку позже.' }), true);
+  assert.equal(serverInternals.isRateLimitError({ content: 'Too many messages. Please try again later.' }), true);
   assert.equal(serverInternals.isRateLimitError('rate_limit_reached'), true);
-  assert.equal(serverInternals.isRateLimitError({ content: 'Повторите попытку позже: сервер обновляется.' }), false);
-  assert.equal(serverInternals.isRateLimitError({ content: 'Содержание слишком длинное' }), false);
+  assert.equal(serverInternals.isRateLimitError({ content: 'Please try again later: the server is updating.' }), false);
+  assert.equal(serverInternals.isRateLimitError({ content: 'The content is too long' }), false);
   assert.deepEqual(serverInternals.classifyRecoveryFailure({ content: 'Too many messages' }, false), { status: 429, type: 'rate_limit_error' });
-  assert.deepEqual(serverInternals.classifyRecoveryFailure({ content: 'Слишком частые сообщения. Повторите попытку позже.' }, false), { status: 429, type: 'rate_limit_error' });
+  assert.deepEqual(serverInternals.classifyRecoveryFailure({ content: 'Too many messages. Please try again later.' }, false), { status: 429, type: 'rate_limit_error' });
 });
 
 test('.env loader fills only unset variables', () => {

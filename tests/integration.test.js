@@ -279,8 +279,8 @@ test('long generations outlive the connect timeout, stalled streams time out', a
 });
 
 test('request bodies are decoded as UTF-8 even when a character is split across chunks', async () => {
-  const payload = Buffer.from(JSON.stringify({ model: 'deepseek-chat', user: 'utf8', messages: [{ role: 'user', content: 'Привет, мир' }] }), 'utf8');
-  const splitAt = payload.indexOf(Buffer.from('р', 'utf8')) + 1; // inside a 2-byte character
+  const payload = Buffer.from(JSON.stringify({ model: 'deepseek-chat', user: 'utf8', messages: [{ role: 'user', content: 'Hello, wörld' }] }), 'utf8');
+  const splitAt = payload.indexOf(Buffer.from('ö', 'utf8')) + 1; // inside a 2-byte character
   const status = await new Promise((resolve, reject) => {
     const req = http.request(`${proxyUrl}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length } }, res => {
       res.resume();
@@ -291,7 +291,7 @@ test('request bodies are decoded as UTF-8 even when a character is split across 
     setTimeout(() => req.end(payload.subarray(splitAt)), 50);
   });
   assert.equal(status, 200);
-  assert.match(mock.state.completions.at(-1).body.prompt, /Привет, мир/);
+  assert.match(mock.state.completions.at(-1).body.prompt, /Hello, wörld/);
 });
 
 test('a throttled account fails over to the next ready account', async () => {
@@ -327,7 +327,7 @@ test('a throttled account fails over to the next ready account', async () => {
 
 test('in-stream context-too-long errors are retried with a fresh chat', async () => {
   mock.state.respond = (body, auth, n) => (n === 1
-    ? { error: 'Содержание слишком длинное. Сократите его и попробуйте снова.' }
+    ? { error: 'The content is too long. Shorten it and try again.' }
     : { text: 'recovered' });
   const res = await chat({ model: 'deepseek-chat', user: 'overflow', messages: [{ role: 'user', content: 'big' }] });
   assert.equal(res.status, 200, res.text);
@@ -371,7 +371,7 @@ test('a throttled turn keeps the remote chat for the next request', async () => 
   const first = await chat({ model: 'deepseek-chat', user: 'keep-chat', messages: [{ role: 'user', content: 'My name is Ann' }] });
   assert.equal(first.status, 200, first.text);
   const chatId = mock.state.completions.at(-1).body.chat_session_id;
-  mock.state.respond = () => ({ status: 400, errorBody: JSON.stringify({ msg: 'Слишком частые сообщения. Повторите попытку позже.' }) });
+  mock.state.respond = () => ({ status: 400, errorBody: JSON.stringify({ msg: 'Too many messages. Please try again later.' }) });
   const throttled = await chat({ model: 'deepseek-chat', user: 'keep-chat', messages: [{ role: 'user', content: 'hi again' }] });
   assert.equal(throttled.status, 429, throttled.text);
   // An immediate retry during the cooldown is refused without dropping the chat.
@@ -384,39 +384,39 @@ test('a throttled turn keeps the remote chat for the next request', async () => 
   assert.equal(mock.state.completions.at(-1).body.chat_session_id, chatId);
 });
 
-test('Russian SSE throttle returns 429, cools down the account, then recovers after cooldown', async () => {
-  mock.state.respond = () => ({ error: 'Слишком частые сообщения. Повторите попытку позже.' });
-  const throttled = await chat({ model: 'deepseek-chat', user: 'russian-sse-throttle', messages: [{ role: 'user', content: 'first' }] });
+test('SSE throttle returns 429, cools down the account, then recovers after cooldown', async () => {
+  mock.state.respond = () => ({ error: 'Too many messages. Please try again later.' });
+  const throttled = await chat({ model: 'deepseek-chat', user: 'sse-throttle', messages: [{ role: 'user', content: 'first' }] });
   assert.equal(throttled.status, 429, throttled.text);
   assert.equal(throttled.json.error.type, 'rate_limit_error');
   assert.ok(throttled.headers.get('retry-after'));
   assert.equal(mock.state.completions.length, 1, 'the throttle response must not trigger an upstream retry');
   assert.ok(internals.accounts[0].cooldownUntil > Date.now());
 
-  const duringCooldown = await chat({ model: 'deepseek-chat', user: 'russian-sse-throttle', messages: [{ role: 'user', content: 'first' }] });
+  const duringCooldown = await chat({ model: 'deepseek-chat', user: 'sse-throttle', messages: [{ role: 'user', content: 'first' }] });
   assert.equal(duringCooldown.status, 429, duringCooldown.text);
   assert.equal(mock.state.completions.length, 1, 'a client retry during cooldown must not reach DeepSeek');
 
   internals.accounts[0].cooldownUntil = Date.now() - 1;
   mock.state.respond = () => ({ text: 'recovered' });
-  const recovered = await chat({ model: 'deepseek-chat', user: 'russian-sse-throttle', messages: [{ role: 'user', content: 'second' }] });
+  const recovered = await chat({ model: 'deepseek-chat', user: 'sse-throttle', messages: [{ role: 'user', content: 'second' }] });
   assert.equal(recovered.status, 200, recovered.text);
   assert.equal(recovered.json.choices[0].message.content, 'recovered');
   assert.equal(mock.state.completions.length, 2);
 });
 
-test('ordinary Russian assistant text is not classified as throttling', async () => {
-  const phrase = 'Слишком частые сообщения. Повторите попытку позже.';
+test('ordinary assistant text quoting a throttle message is not classified as throttling', async () => {
+  const phrase = 'Too many messages. Please try again later.';
   mock.state.respond = () => ({ text: phrase });
-  const res = await chat({ model: 'deepseek-chat', user: 'russian-throttle-text', messages: [{ role: 'user', content: 'quote this' }] });
+  const res = await chat({ model: 'deepseek-chat', user: 'throttle-text', messages: [{ role: 'user', content: 'quote this' }] });
   assert.equal(res.status, 200, res.text);
   assert.equal(res.json.choices[0].message.content, phrase);
   assert.equal(internals.accounts[0].cooldownUntil, 0);
 });
 
-test('Russian SSE throttle after reasoning begins is an in-stream rate-limit error', async () => {
-  mock.state.respond = () => ({ thinking: 'checking the request', error: 'Слишком частые сообщения. Повторите попытку позже.' });
-  const result = await timedStream('/v1/chat/completions', { model: 'deepseek-reasoner', stream: true, user: 'russian-think-throttle', messages: [{ role: 'user', content: 'try this' }] });
+test('SSE throttle after reasoning begins is an in-stream rate-limit error', async () => {
+  mock.state.respond = () => ({ thinking: 'checking the request', error: 'Too many messages. Please try again later.' });
+  const result = await timedStream('/v1/chat/completions', { model: 'deepseek-reasoner', stream: true, user: 'think-throttle', messages: [{ role: 'user', content: 'try this' }] });
   assert.equal(result.status, 200);
   assert.match(result.raw, /reasoning_content/);
   const errorEvent = result.events.find(e => /"error":/.test(e.part));
@@ -429,13 +429,13 @@ test('Russian SSE throttle after reasoning begins is an in-stream rate-limit err
   assert.ok(internals.accounts[0].cooldownUntil > Date.now());
 });
 
-test('a late Russian SSE throttle after partial text emits an error and cools down the account', async () => {
+test('a late SSE throttle after partial text emits an error and cools down the account', async () => {
   mock.state.respond = () => ({
     text: 'partial answer',
-    errorAfterResponse: 'Слишком частые сообщения. Повторите попытку позже.',
+    errorAfterResponse: 'Too many messages. Please try again later.',
     gapMs: 25,
   });
-  const result = await timedStream('/v1/chat/completions', { model: 'deepseek-chat', stream: true, user: 'late-russian-throttle', messages: [{ role: 'user', content: 'test' }] });
+  const result = await timedStream('/v1/chat/completions', { model: 'deepseek-chat', stream: true, user: 'late-throttle', messages: [{ role: 'user', content: 'test' }] });
   assert.equal(result.status, 200);
   assert.match(result.raw, /"content":"partial answer"/);
   const errorEvent = result.events.find(e => /"error":/.test(e.part));
@@ -449,7 +449,7 @@ test('a late Russian SSE throttle after partial text emits an error and cools do
   assert.ok(internals.accounts[0].cooldownUntil > Date.now());
 
   internals.accounts[0].cooldownUntil = 0;
-  const nonstream = await chat({ model: 'deepseek-chat', user: 'late-russian-throttle-json', messages: [{ role: 'user', content: 'test' }] });
+  const nonstream = await chat({ model: 'deepseek-chat', user: 'late-throttle-json', messages: [{ role: 'user', content: 'test' }] });
   assert.equal(nonstream.status, 429, nonstream.text);
   assert.equal(nonstream.json.error.type, 'rate_limit_error');
   assert.ok(nonstream.headers.get('retry-after'));
@@ -470,7 +470,7 @@ test('late throttle does not fail over and same-transcript retry starts a fresh 
   const request = { model: 'deepseek-chat', user: 'late-throttle-retry', messages: [{ role: 'user', content: 'same full transcript' }] };
   mock.state.respond = () => ({
     text: 'partial answer',
-    errorAfterResponse: 'Слишком частые сообщения. Повторите попытку позже.',
+    errorAfterResponse: 'Too many messages. Please try again later.',
     gapMs: 25,
   });
   const throttled = await timedStream('/v1/chat/completions', { ...request, stream: true });
@@ -502,7 +502,7 @@ test('late throttle does not fail over and same-transcript retry starts a fresh 
 test('a rate-limit error on an empty continuation fails instead of returning earlier partial text', async () => {
   mock.state.respond = (body, auth, n) => (n === 1
     ? { text: 'partial answer', finalStatus: 'INCOMPLETE' }
-    : { error: 'Слишком частые сообщения. Повторите попытку позже.' });
+    : { error: 'Too many messages. Please try again later.' });
   const result = await timedStream('/v1/chat/completions', { model: 'deepseek-chat', stream: true, user: 'throttled-continuation', messages: [{ role: 'user', content: 'continue' }] });
   assert.equal(result.status, 200);
   assert.match(result.raw, /"content":"partial answer"/);
@@ -520,7 +520,7 @@ test('a throttled continuation clears its remote chat before a same-transcript r
   const request = { model: 'deepseek-chat', user: 'continuation-throttle-retry', messages: [{ role: 'user', content: 'same continuation transcript' }] };
   mock.state.respond = (body, auth, n) => (n === 1
     ? { text: 'partial answer', finalStatus: 'INCOMPLETE' }
-    : { error: 'Слишком частые сообщения. Повторите попытку позже.' });
+    : { error: 'Too many messages. Please try again later.' });
   const throttled = await timedStream('/v1/chat/completions', { ...request, stream: true });
   assert.equal(throttled.status, 200);
   assert.ok(throttled.events.some(e => /"error":/.test(e.part)), throttled.raw);
